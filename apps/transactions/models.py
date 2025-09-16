@@ -7,6 +7,7 @@ class Transaction(BaseModel):
     class TransactionType(models.TextChoices):
         INCOME = 'income', 'รายรับ'
         EXPENSE = 'expense', 'รายจ่าย'
+    
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     type = models.CharField(max_length=7, choices=TransactionType.choices)
@@ -15,9 +16,13 @@ class Transaction(BaseModel):
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
     date = models.DateTimeField()
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
-
     class Meta:
         ordering = ['-date']
+        
 
     def __str__(self):
         return f"{self.name} ({self.get_type_display()}) - {self.price}"
+
+class TransactionFile(models.Model):
+    transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="uploads/%Y-%m-%d")

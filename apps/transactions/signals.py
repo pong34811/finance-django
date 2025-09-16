@@ -1,8 +1,10 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from .models import Transaction
 from calendar import monthrange
 from datetime import date as date_class
+import requests
+from .discord_form.message_template import MESSAGE_CREATED_TEMPLATE
 
 from apps.reports.views import (
     generate_day_report,
@@ -10,7 +12,7 @@ from apps.reports.views import (
     generate_year_report,  # อย่าลืมเพิ่มใน views.py ถ้ายังไม่มี
 )
 
-
+# auto-generate reports when a Transaction is created
 @receiver(post_save, sender=Transaction)
 def auto_generate_reports(sender, instance, created, **kwargs):
     if not created:
@@ -31,3 +33,57 @@ def auto_generate_reports(sender, instance, created, **kwargs):
     start_year = date_class(tx_date.year, 1, 1)
     end_year = date_class(tx_date.year, 12, 31)
     generate_year_report(user=user, start_date=start_year, end_date=end_year)
+
+# ส่งข้อความไปยัง Discord
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1417451493908549784/d46gfxbQLGK68eVclCRb7Jh91VXTH5AB8BY5T0qB5Jbvjj_0Qoj46v1mmRybF2pS3r26"
+
+def send_discord_message(content: str, file=None):
+    data = {"content": content}
+    files = None
+
+    if file:
+        files = {"file": (file.name, file.read())}
+
+    try:
+        response = requests.post(DISCORD_WEBHOOK_URL, data=data, files=files)
+        response.raise_for_status()
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error sending Discord webhook: {e}")
+
+
+@receiver(post_save, sender=Transaction)
+def transaction_saved(sender, instance, created, **kwargs):
+    if created:
+        message_text = MESSAGE_CREATED_TEMPLATE.format(
+            title="Transaction Created",
+            date=instance.date.strftime("%Y-%m-%d %H:%M:%S"),
+            name=instance.name,
+            price=instance.price,
+            type=instance.get_type_display()
+        )
+    else:
+        message_text = MESSAGE_CREATED_TEMPLATE.format(
+            title="Transaction Updated",
+            date=instance.date.strftime("%Y-%m-%d %H:%M:%S"),
+            name=instance.name,
+            price=instance.price,
+            type=instance.get_type_display()
+        )
+
+    # ส่งข้อความหลักก่อน
+    send_discord_message(message_text)
+
+    # ส่งไฟล์ทีละตัว ถ้ามี
+    files = list(instance.files.all())
+    for tf in files:
+        with tf.file.open("rb") as f:
+            # ต้องส่ง positional arg content ด้วย (สามารถเว้นว่างหรือใส่ข้อความสั้น ๆ)
+            send_discord_message("", file=f)
+
+        
+@receiver(post_delete, sender=Transaction)
+def transaction_deleted(sender, instance, **kwargs):
+    message = f"Transaction Deleted: {instance.name} - {instance.price} ({instance.get_type_display()})"
+    send_discord_message(message)
